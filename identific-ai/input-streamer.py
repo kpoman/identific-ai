@@ -12,7 +12,7 @@ from imutils.video import VideoStream
 
 @click.command()
 @click.option('--src-type', default='v4l2', help='type of the input stream (v4l2, picamera, netstream)')
-@click.option('--src-index', default='', help='index or url of the device')
+@click.option('--src-index', default='0', help='index or url of the device')
 @click.option('--dst-ip', default='127.0.0.1')
 @click.option('--dst-port', default=5555)
 @click.option('--transform', default=None)
@@ -20,7 +20,7 @@ from imutils.video import VideoStream
 def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, tagging):
     sender = imagezmq.ImageSender(f'tcp://{dst_ip}:{dst_port}', REQ_REP=False)
     if src_type =='v4l2':
-        capture = VideoStream(src_index)
+        capture = VideoStream(int(src_index))
     elif src_type =='picamera':
         capture = VideoStream(usePiCamera=True)
     elif src_type == 'youtube':
@@ -38,8 +38,8 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
         if 'qrcode' in tagging:
             qrDecoder = cv2.QRCodeDetector()
         if 'plates' in tagging:
-            cascade = '/home/kpoman/Dev/openalpr-master/runtime_data/region/br.xml'
-            classifier = cv2.CascadeClassifier(cascade)
+            path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets', 'br.xml')
+            classifier = cv2.CascadeClassifier(path)
 
     hostname = socket.gethostname()
 
@@ -49,8 +49,8 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
         if tagging:
             if 'qrcode' in tagging:
                 data,bbox,rectifiedImage = qrDecoder.detectAndDecode(frame)
-                if data:
-                    print(data)
+                # if data:
+                #     print(data)
             if 'plates' in tagging:
                 frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 frame_gray = cv2.equalizeHist(frame_gray)
@@ -71,7 +71,6 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
 def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
     dim = None
     (h, w) = image.shape[:2]
-
     if width is None and height is None:
         return image
     if width is None:
