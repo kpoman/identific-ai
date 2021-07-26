@@ -4,6 +4,7 @@ import socket
 import time
 import datetime
 import json
+import traceback
 import click
 import cv2
 import numpy as np
@@ -18,7 +19,8 @@ from imutils.video import VideoStream
 @click.option('--dst-port', default=5555)
 @click.option('--transform', default=None, help='a json array of operation and params')
 @click.option('--tagging', default='qrcode,plates,faces')
-def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, tagging):
+@click.option('--xdebug', default=False, help='debug locally with an X server')
+def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, tagging, xdebug):
     sender = imagezmq.ImageSender(f'tcp://{dst_ip}:{dst_port}', REQ_REP=False)
     if src_type =='v4l2':
         capture = VideoStream(src=int(src_index), usePiCamera=False)
@@ -29,7 +31,6 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
         url = src_index
         video = pafy.new(url)
         best = video.getbest(preftype="mp4")
-        #capture = cv2.VideoCapture(best.url)
         capture = VideoStream(best.url)
 
     capture.start()
@@ -46,51 +47,72 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
             face_classifier = cv2.CascadeClassifier(path)            
 
     hostname = socket.gethostname()
+    try:
+        while True:
+            frame = capture.read()
+            if transform:
+                frame = apply_transform(frame, transform)
+            #frame = image_resize(frame, width=400)
+            frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame_gray = cv2.equalizeHist(frame_gray)
+            faces = plates = qrcodes = []
+            if tagging:
+                if 'qrcode' in tagging:
+                    timer_s = datetime.datetime.now()
+                    qrcodes,bbox,rectifiedImage = qrDecoder.detectAndDecode(frame_gray)
+                    print(datetime.datetime.now()-timer_s, 'qrcode detect', qrcodes)
+                if 'plates' in tagging:
+                    timer_s = datetime.datetime.now()
+                    plates = plate_classifier.detectMultiScale(frame_gray)
+                    if len(plates) > 0:
+                        plates = plates[0].tolist()
+                    print(datetime.datetime.now()-timer_s, 'plate detect', plates)
+                if 'faces' in tagging:
+                    timer_s = datetime.datetime.now()
+                    faces = face_classifier.detectMultiScale(frame_gray)
+                    if len(faces) > 0:
+                        faces = faces[0].tolist()                
+                    print(datetime.datetime.now()-timer_s, 'face detect', faces)
 
-    while True:
-        frame = capture.read()
-        if transform:
-            frame = apply_transform(frame, transform)
-        #frame = image_resize(frame, width=400)
-        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame_gray = cv2.equalizeHist(frame_gray)
-        if tagging:
-            if 'qrcode' in tagging:
-                timer_s = datetime.datetime.now()
-                data,bbox,rectifiedImage = qrDecoder.detectAndDecode(frame_gray)
-                print(datetime.datetime.now()-timer_s, 'qrcode detect', data)
-            if 'plates' in tagging:
-                timer_s = datetime.datetime.now()
-                plates = plate_classifier.detectMultiScale(frame_gray)
-                print(datetime.datetime.now()-timer_s, 'plate detect', plates)
-                for (x,y,w,h) in plates:
-                    center = (x + w//2, y + h//2)
-                    frame = cv2.ellipse(frame, center, (w//2, h//2), 0, 0, 360, (255, 0, 255), 4)
-                    faceROI = frame_gray[y:y+h,x:x+w]
-            if 'faces' in tagging:
-                timer_s = datetime.datetime.now()
-                faces = face_classifier.detectMultiScale(frame_gray)
-                print(datetime.datetime.now()-timer_s, 'face detect', faces)
+            if xdebug:
+                cv2.imshow('Capture - Plate detection', frame)
+                cv2.waitKey(1)
 
-        #cv2.imshow('Capture - Plate detection', frame)
-        #cv2.waitKey(1)
+            metadata = {
+                'hostname': hostname, 
+                'datetime':datetime.datetime.now().strftime('%Y%m%d%H%M%S.%f'),
+                'faces': faces,
+                'plates': plates,
+                'qrcodes': qrcodes
+            }
+            sender.send_image(json.dumps(metadata), frame)
+    except Exception as ex:
+        print('exception caught:', ex)
+        capture.stop()
+        traceback.print_exc()
 
-        metadata = {
-            'hostname': hostname, 
-            'datetime':datetime.datetime.now().strftime('%Y%m%d%H%M%S.%f'),
-            'faces': faces,
-            'plates': plates,
-            'qrcodes': data
-        }
-        sender.send_image(json.dumps(metadata), frame)
-        #time.sleep(0.1)
-        #print(metadata)
 
 def apply_transform(image, transform):
+    """
+    {
+        "transformation": "Crop",
+        "width": 100,
+        "height": 100,
+        "xPosition": 0,
+        "yPosition": 0,
+        "gravity": "NorthWest"
+    },
+    {
+        "transformation": "Rotate",
+        "degrees": 45.3
+    }
+    """
     operations = json.loads(transform)
     for o in operations:
-        if o['operation'] == 'Rotate':
+        if o['transformation'] == 'Rotate':
             image = rotate_image(image, int(o['Degrees']))
+        if o['transformation'] == 'Crop':
+            image = image[o['yPosition']:o['yPosition']+o['height'], o['xPosition']:+o['xPosition']+o['width']]
     return image
 
 def rotate_image(image, angle):

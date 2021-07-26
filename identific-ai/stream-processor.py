@@ -20,26 +20,33 @@ def create_stream_processor(src_ip, src_port, processor):
     if processor == 'web':
         x = threading.Thread(target=run_simple, args=('0.0.0.0', 4000, application,), daemon=True)
         x.start()
-    try:
-        while True:
+    while True:
+        try:
             msg, frame = receiver.receive()
+            print(msg)
             frame_stack.append((msg, frame))
-    except (KeyboardInterrupt, SystemExit):
-        print('Exit due to keyboard interrupt')
-    except TimeoutError as ex:
-        print('Timeout error, streamer is gone ...')
-    except Exception as ex:
-        print('Python error with no Exception handler:')
-        print('Traceback error:', ex)
-        traceback.print_exc()
-    finally:
-        receiver.close()
-        sys.exit()
+        except TimeoutError as ex:
+            print('Timeout error, streamer is gone ... sleep 5s and re-establish connection !')
+            receiver.close()
+            sleep(5)
+            receiver = VideoStreamSubscriber(src_ip, src_port)
+            pass
+        except Exception as ex:
+            print('Python error with no Exception handler:')
+            print('Traceback error:', ex)
+            traceback.print_exc()
+            receiver.close()
+            sys.exit()
 
 def sendImagesToWeb():
     while True:
         try:
             camName, frame = frame_stack.pop()#receiver.recv_image()
+            # add visual indicator of detected stuff
+            # for (x,y,w,h) in plates:
+            #     center = (x + w//2, y + h//2)
+            #     frame = cv2.ellipse(frame, center, (w//2, h//2), 0, 0, 360, (255, 0, 255), 4)
+            #     faceROI = frame_gray[y:y+h,x:x+w]            
             jpg = cv2.imencode('.jpg', frame)[1]
             yield b'--frame\r\nContent-Type:image/jpeg\r\n\r\n'+jpg.tostring()+b'\r\n'    
         except Exception as e:
