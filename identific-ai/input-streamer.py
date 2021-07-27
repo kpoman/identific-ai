@@ -12,6 +12,7 @@ from click.types import DateTime
 import imagezmq
 from imutils.video import VideoStream
 
+
 @click.command()
 @click.option('--src-type', default='v4l2', help='type of the input stream (v4l2, picamera, netstream)')
 @click.option('--src-index', default='0', help='index or url of the device')
@@ -59,7 +60,12 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
             if tagging:
                 if 'qrcode' in tagging:
                     timer_s = datetime.datetime.now()
-                    qrcodes,bbox,rectifiedImage = qrDecoder.detectAndDecode(frame_gray)
+                    qrcodes = qrDecoder.detect(frame_gray)
+                    if qrcodes[0]:  # True
+                        print(qrcodes[1][0])
+                        qrcodes = qrcodes[1][0].astype(np.int32).tolist() #list(totuple(qrcodes[1][0].astype(np.int32)))
+                    else:
+                        qrcodes = []
                     print(datetime.datetime.now()-timer_s, 'qrcode detect', qrcodes)
                 if 'plates' in tagging:
                     timer_s = datetime.datetime.now()
@@ -75,6 +81,9 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
                     print(datetime.datetime.now()-timer_s, 'face detect', faces)
 
             if xdebug:
+                if len(qrcodes) > 0:
+                    print(np.array(qrcodes))
+                    frame = cv2.drawContours(frame, [np.array(qrcodes)], 0, (255,0,0,0))
                 cv2.imshow('Capture - Plate detection', frame)
                 cv2.waitKey(1)
 
@@ -85,7 +94,13 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
                 'plates': plates,
                 'qrcodes': qrcodes
             }
-            sender.send_image(json.dumps(metadata), frame)
+            try:
+                sender.send_image(json.dumps(metadata), frame)
+            except Exception as e:
+                print(e, ':')
+                print(type(metadata['qrcodes'][0][0]))
+                print(metadata)
+            #time.sleep(0.5)
     except Exception as ex:
         print('exception caught:', ex)
         capture.stop()
@@ -105,6 +120,12 @@ def apply_transform(image, transform):
     {
         "transformation": "Rotate",
         "degrees": 45.3
+    },
+    {
+        "transformation": "Resize",
+        "width": 100,
+        "height": 100,
+        "aspect": "fit",        
     }
     """
     operations = json.loads(transform)
@@ -113,6 +134,8 @@ def apply_transform(image, transform):
             image = rotate_image(image, int(o['Degrees']))
         if o['transformation'] == 'Crop':
             image = image[o['yPosition']:o['yPosition']+o['height'], o['xPosition']:+o['xPosition']+o['width']]
+        if o['transformation'] == 'Resize':
+            image = image_resize(image, width=o['width'], height=o['height'])
     return image
 
 def rotate_image(image, angle):
@@ -134,6 +157,13 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
         dim = (width, int(h * r))
     resized = cv2.resize(image, dim, interpolation = inter)
     return resized
+
+def totuple(a):
+    try:
+        return tuple(totuple(i) for i in a)
+    except TypeError:
+        return a
+
 
 if __name__ == '__main__':
     create_input_stream()
