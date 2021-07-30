@@ -5,21 +5,24 @@ import time
 import datetime
 import json
 import traceback
+from threading import Thread, Event
 import click
 import cv2
 import numpy as np
 from click.types import DateTime
 import imagezmq
 from imutils.video import VideoStream
+from utils import apply_transform, totuple
+from qr_extractor import extract
 
 
 @click.command()
-@click.option('--src-type', default='v4l2', help='type of the input stream (v4l2, picamera, netstream)')
+@click.option('--src-type', default='v4l2', help='type of the input stream (v4l2, picamera, hubstream, netstream)')
 @click.option('--src-index', default='0', help='index or url of the device')
 @click.option('--dst-ip', default='127.0.0.1')
 @click.option('--dst-port', default=5555)
 @click.option('--transform', default=None, help='a json array of operation and params')
-@click.option('--tagging', default='qrcode,plates,faces')
+@click.option('--tagging', default='', help='available taggings: qrcode,plate,face')
 @click.option('--xdebug', default=False, help='debug locally with an X server')
 def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, tagging, xdebug):
     sender = imagezmq.ImageSender(f'tcp://{dst_ip}:{dst_port}', REQ_REP=False)
@@ -33,17 +36,22 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
         video = pafy.new(url)
         best = video.getbest(preftype="mp4")
         capture = VideoStream(best.url)
+    elif src_type == 'hubstream':
+        capture = VideoStreamSubscriber(hostname=src_index.split(':')[0], port=src_index.split(':')[1])
 
     capture.start()
     time.sleep(2.0)
 
+    print('tagging:')
+    print(tagging)
+
     if tagging:
         if 'qrcode' in tagging:
             qrDecoder = cv2.QRCodeDetector()
-        if 'plates' in tagging:
+        if 'plate' in tagging:
             path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets', 'br.xml')
             plate_classifier = cv2.CascadeClassifier(path)
-        if 'faces' in tagging:
+        if 'face' in tagging:
             path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets', 'haarcascade_frontalface_alt.xml')
             face_classifier = cv2.CascadeClassifier(path)            
 
@@ -59,21 +67,24 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
             faces = plates = qrcodes = []
             if tagging:
                 if 'qrcode' in tagging:
+                    # codes, output = extract(frame, debug=True)
+                    # cv2.imshow('qrcode', output)
+                    # cv2.waitKey(1)
+                    #print(res)
                     timer_s = datetime.datetime.now()
-                    qrcodes = qrDecoder.detect(frame_gray)
+                    qrcodes = qrDecoder.detectMulti(frame_gray)
                     if qrcodes[0]:  # True
-                        print(qrcodes[1][0])
                         qrcodes = qrcodes[1][0].astype(np.int32).tolist() #list(totuple(qrcodes[1][0].astype(np.int32)))
                     else:
                         qrcodes = []
                     print(datetime.datetime.now()-timer_s, 'qrcode detect', qrcodes)
-                if 'plates' in tagging:
+                if 'plate' in tagging:
                     timer_s = datetime.datetime.now()
                     plates = plate_classifier.detectMultiScale(frame_gray)
                     if len(plates) > 0:
                         plates = plates[0].tolist()
                     print(datetime.datetime.now()-timer_s, 'plate detect', plates)
-                if 'faces' in tagging:
+                if 'face' in tagging:
                     timer_s = datetime.datetime.now()
                     faces = face_classifier.detectMultiScale(frame_gray)
                     if len(faces) > 0:
@@ -106,64 +117,45 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
         capture.stop()
         traceback.print_exc()
 
+# Helper class implementing an IO deamon thread
+class VideoStreamSubscriber:
 
-def apply_transform(image, transform):
-    """
-    {
-        "transformation": "Crop",
-        "width": 100,
-        "height": 100,
-        "xPosition": 0,
-        "yPosition": 0,
-        "gravity": "NorthWest"
-    },
-    {
-        "transformation": "Rotate",
-        "degrees": 45.3
-    },
-    {
-        "transformation": "Resize",
-        "width": 100,
-        "height": 100,
-        "aspect": "fit",        
-    }
-    """
-    operations = json.loads(transform)
-    for o in operations:
-        if o['transformation'] == 'Rotate':
-            image = rotate_image(image, int(o['Degrees']))
-        if o['transformation'] == 'Crop':
-            image = image[o['yPosition']:o['yPosition']+o['height'], o['xPosition']:+o['xPosition']+o['width']]
-        if o['transformation'] == 'Resize':
-            image = image_resize(image, width=o['width'], height=o['height'])
-    return image
+    def __init__(self, hostname, port):
+        self.hostname = hostname
+        self.port = port
+        self._stop = False
+        self._data_ready = Event()
+        self._thread = Thread(target=self._run, args=())
+        self._thread.daemon = True
 
-def rotate_image(image, angle):
-    image_center = tuple(np.array(image.shape[1::-1]) / 2)
-    rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
-    result = cv2.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv2.INTER_LINEAR)
-    return result
 
-def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
-    dim = None
-    (h, w) = image.shape[:2]
-    if width is None and height is None:
-        return image
-    if width is None:
-        r = height / float(h)
-        dim = (int(w * r), height)
-    else:
-        r = width / float(w)
-        dim = (width, int(h * r))
-    resized = cv2.resize(image, dim, interpolation = inter)
-    return resized
+    def start(self):
+        self._thread.start()
 
-def totuple(a):
-    try:
-        return tuple(totuple(i) for i in a)
-    except TypeError:
-        return a
+    def receive(self, timeout=15.0):
+        flag = self._data_ready.wait(timeout=timeout)
+        if not flag:
+            raise TimeoutError(
+                "Timeout while reading from subscriber tcp://{}:{}".format(self.hostname, self.port))
+        self._data_ready.clear()
+        return self._data
 
+    def read(self):
+        msg, frame = self.receive()
+        return frame #cv2.imdecode(np.frombuffer(frame, dtype='uint8'), -1)
+
+    def _run(self):
+        receiver = imagezmq.ImageHub("tcp://{}:{}".format(self.hostname, self.port), REQ_REP=False)
+        while not self._stop:
+            self._data = receiver.recv_image() #.recv_jpg()
+            self._data_ready.set()
+        receiver.close()
+
+    def close(self):
+        self._stop = True
+
+    def stop(self):
+        self.close()
 
 if __name__ == '__main__':
     create_input_stream()
