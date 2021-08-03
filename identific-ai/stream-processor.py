@@ -5,16 +5,18 @@ import imagezmq
 import threading
 import numpy as np
 from time import sleep
+import collections
+import traceback
 import click
 from werkzeug.wrappers import Request, Response
 from werkzeug.serving import run_simple
 
-frame_stack = []
+frame_stack = collections.deque([], maxlen=10)
 
 @click.command()
 @click.option('--src-ip', default='127.0.0.1')
 @click.option('--src-port', default=5555)
-@click.option('--processor', default='web')
+@click.option('--processor', default='')
 def create_stream_processor(src_ip, src_port, processor):
     receiver = VideoStreamSubscriber(src_ip, src_port)
     if processor == 'web':
@@ -28,9 +30,8 @@ def create_stream_processor(src_ip, src_port, processor):
         except TimeoutError as ex:
             print('Timeout error, streamer is gone ... sleep 5s and re-establish connection !')
             receiver.close()
-            sleep(5)
+            sleep(1)
             receiver = VideoStreamSubscriber(src_ip, src_port)
-            pass
         except Exception as ex:
             print('Python error with no Exception handler:')
             print('Traceback error:', ex)

@@ -27,7 +27,7 @@ def apply_transform(frame, transform):
         operations = json.loads(transform)
         for o in operations:
             if o['transformation'] == 'Rotate':
-                frame = image_rotate(frame, int(o['Degrees']))
+                frame = image_rotate(frame, int(o['degrees']))
             if o['transformation'] == 'Crop':
                 frame = frame[o['yPosition']:o['yPosition']+o['height'], o['xPosition']:+o['xPosition']+o['width']]
             if o['transformation'] == 'Resize':
