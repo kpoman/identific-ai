@@ -10,6 +10,7 @@ import traceback
 import click
 from werkzeug.wrappers import Request, Response
 from werkzeug.serving import run_simple
+from processors import tag_dump
 
 frame_stack = collections.deque([], maxlen=10)
 
@@ -22,10 +23,13 @@ def create_stream_processor(src_ip, src_port, processor):
     if processor == 'web':
         x = threading.Thread(target=run_simple, args=('0.0.0.0', 4000, application,), daemon=True)
         x.start()
+    elif processor == 'dump':
+        x = threading.Thread(target=tag_dump, args=(frame_stack,), daemon=True)
+        x.start()
     while True:
         try:
             msg, frame = receiver.receive()
-            print(msg)
+            #print(msg)
             frame_stack.append((msg, frame))
         except TimeoutError as ex:
             print('Timeout error, streamer is gone ... sleep 5s and re-establish connection !')

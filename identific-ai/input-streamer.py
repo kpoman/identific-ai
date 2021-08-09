@@ -32,7 +32,8 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
     if src_type =='v4l2':
         capture = VideoStream(src=int(src_index), usePiCamera=False)
     elif src_type =='picamera':
-        capture = VideoStream(usePiCamera=True)
+        #capture = VideoStream(usePiCamera=True, resolution=(1280,720), framerate=10)
+        capture = VideoStream(usePiCamera=True, resolution=(1920,1080), framerate=10)
     elif src_type == 'youtube':
         import pafy
         url = src_index
@@ -55,7 +56,9 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
     try:
         while True:
             frame = capture.read()
+            print('original shape', frame.shape)
             frame = apply_transform(frame, transform)
+            print('new shape', frame.shape)
             tags = tagger.detect_frame_tags(frame)
             
             if xdebug:
@@ -65,7 +68,7 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
 
             metadata = {
                 'hostname': hostname, 
-                'datetime':datetime.datetime.now().strftime('%Y%m%d%H%M%S.%f'),
+                'datetime': datetime.datetime.now().strftime('%Y%m%d%H%M%S.%f'),
                 'tags': tags,
             }
             try:
@@ -73,7 +76,7 @@ def create_input_stream(src_type, src_index, dst_ip, dst_port, transform, taggin
             except Exception as e:
                 print(e, ':')
                 print(metadata)
-            #time.sleep(0.5)
+            time.sleep(0.1)
     except Exception as ex:
         print('exception caught:', ex)
         capture.stop()

@@ -1,5 +1,7 @@
 import datetime
 import os
+import time
+import json
 import cv2
 import imagezmq
 from utils import rect_as_points
@@ -91,3 +93,29 @@ class FrameTagger():
                 for f in faces:
                     tags['face'].append(rect_as_points(f)) #faces[0].tolist()                
         return tags
+
+def tag_dump(input_stack, output_dir='tag_dump/'):
+    print('created tag_dump')
+    while True:
+        try:
+            res = input_stack.pop()
+            if res:
+                obj = json.loads(res[0])
+                if 'tags' in obj:
+                    for tag in obj['tags']:
+                        cnt = 0
+                        for item in obj['tags'][tag]:
+                            #print(f'item-{tag}-{cnt} at {obj["tags"][tag][cnt]}')
+                            filename = f'{obj["hostname"]}-{obj["datetime"]}-{tag}-{cnt}.jpg'
+                            coords = obj['tags'][tag][cnt]
+                            print(filename, 'at', coords)
+                            x, y, w, h = cv2.boundingRect(np.array(coords))
+                            cropped = res[1][y:y+h,x:x+w]
+                            cv2.imwrite(output_dir+filename, cropped)
+                            cnt += 1
+                    #if len(obj['tags']['face']) > 0:
+                    #    for face in obj['tags']['face']:
+                    #        print(face)
+        except Exception as e:
+            pass #print(e)
+        time.sleep(0.1)
